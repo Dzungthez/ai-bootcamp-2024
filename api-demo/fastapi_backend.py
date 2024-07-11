@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from transformers import ViTImageProcessor, ViTForImageClassification
+from transformers import VisionEncoderDecoderModel, ViTImageProcessor, AutoTokenizer
 
 load_dotenv()
 app = FastAPI(title="fastapi-classification-demo")
@@ -17,32 +17,36 @@ app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 templates = Jinja2Templates(directory="templates")
 
 
-def predict_imagenet_confidences(image: Union[Image.Image, str]) -> dict:
-    """[A normal python function]
-    Receive an image and predict confidences for ImageNet classes.
+def gen_caption(image: Union[Image.Image, str]) -> str:
+    """Generate a caption for an image.
 
     Args:
-        image (Union[Image.Image, str]): Image to predict confidences for.
+        image (Union[Image.Image, str]): Image to generate a caption for.
 
     Returns:
-        dict: Dictionary of 1000 classes in ImageNet and their confidence scores (float).
+        str: Generated caption.
     """
     if isinstance(image, str):
         image = Image.open(image)
+    
     # Get the model and processor
-    processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
-    model = ViTForImageClassification.from_pretrained("google/vit-base-patch16-224")
+    model = VisionEncoderDecoderModel.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    feature_extractor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    tokenizer = AutoTokenizer.from_pretrained("nlpconnect/vit-gpt2-image-captioning")
+    model = model.to('cuda:0' if torch.cuda.is_available() else 'cpu')
+    max_length = 16
+    num_beams = 4
+    gen_kwargs = {"max_length": max_length, "num_beams": num_beams}
 
-    inputs = processor(images=image, return_tensors="pt")
-    outputs = model(**inputs)
-    # Get confidence scores for all 1000 classes
-    logits = outputs.logits
-    confidences_id = torch.nn.functional.softmax(logits[0], dim=0)
-    confidences_labels = {
-        model.config.id2label[i]: float(confidences_id[i]) for i in range(1000)
-    }
+    if image.mode != "RGB":
+        image = image.convert(mode="RGB")
 
-    return confidences_labels
+    inputs = feature_extractor(images=image, return_tensors="pt").pixel_values
+    inputs = inputs.to('cuda:0' if torch.cuda.is_available() else 'cpu')
+    output_ids = model.generate(inputs, **gen_kwargs)
+
+    preds = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    return preds.strip()
 
 
 @app.get("/")
@@ -54,19 +58,18 @@ def home(request: Request):
 
 @app.post("/predict/")
 async def predict(file: UploadFile):
-    """[FastAPI endpoint]
-    Predict confidences for ImageNet classes from an uploaded image.
+    """Predict caption for an uploaded image.
 
     Args:
         file (UploadFile): Uploaded image file.
 
     Returns:
-        dict: Dictionary of 1000 classes in ImageNet and their confidence scores (float).
+        dict: Generated caption.
     """
     file_obj = file.file
     image = Image.open(file_obj)
-    confidences = predict_imagenet_confidences(image)
-    return confidences
+    caption = gen_caption(image)
+    return {"caption": caption}
 
 
 def main():
@@ -75,7 +78,7 @@ def main():
         "fastapi_backend:app",
         host=os.getenv("FASTAPI_HOST", "127.0.0.1"),
         port=int(os.getenv("FASTAPI_PORT", 8000)),
-        # reload=True,  # Uncomment this for debug
+        reload=True,  # Uncomment this for debug
     )
 
 
