@@ -2,7 +2,7 @@
 # flake8: noqa: F841
 import sys
 from typing import Dict, List, cast
-
+import torch
 import numpy as np
 from loguru import logger
 from sentence_transformers import SentenceTransformer
@@ -21,8 +21,8 @@ class SemanticVectorStore(BaseVectorStore):
     """Semantic Vector Store using SentenceTransformer embeddings."""
 
     saved_file: str = "rag-foundation/data/test_db_00.csv"
-    embed_model_name: str = "all-MiniLM-L6-v2"
-    embed_model: SentenceTransformer = SentenceTransformer(embed_model_name)
+    embed_model_name: str = "multi-qa-MiniLM-L6-cos-v1"
+    embed_model: SentenceTransformer = SentenceTransformer(embed_model_name, device='cuda' if torch.cuda.is_available() else 'cpu')
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -76,17 +76,17 @@ class SemanticVectorStore(BaseVectorStore):
         # the query embedding with the document embeddings
         # HINT: np.dot
         "Your code here"
-        dproduct_arr = None
+        dproduct_arr = np.dot(qembed_np, dembed_np.T)
         # calculate the cosine similarity
         # by dividing the dot product by the norm
         # HINT: np.linalg.norm
         "Your code here"
-        cos_sim_arr = None
+        cos_sim_arr = dproduct_arr / (np.linalg.norm(qembed_np) * np.linalg.norm(dembed_np, axis=1) + 1e-6)
 
         # get the indices of the top k similarities
         "Your code here"
-        similarities = None
-        node_ids = None
+        similarities = np.argsort(cos_sim_arr)[::-1][:similarity_top_k]
+        node_ids = [doc_ids[i] for i in similarities]
 
         return similarities, node_ids
 
